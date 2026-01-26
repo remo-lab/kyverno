@@ -44,6 +44,8 @@ type WatchManager struct {
 	policyRefs map[string][]schema.GroupVersionResource
 	// refCount tracks the number of policies that generates the same resource.
 	refCount map[schema.GroupVersionResource]int
+	// policySSA tracks whether each policy uses server-side apply
+	policySSA map[string]bool
 
 	log  logr.Logger
 	lock sync.Mutex
@@ -64,13 +66,15 @@ func NewWatchManager(log logr.Logger, client dclient.Interface) *WatchManager {
 		dynamicWatchers: map[schema.GroupVersionResource]*watcher{},
 		policyRefs:      map[string][]schema.GroupVersionResource{},
 		refCount:        map[schema.GroupVersionResource]int{},
+		policySSA:       map[string]bool{},
 	}
 }
 
-func (wm *WatchManager) SyncWatchers(policyName string, generatedResources []*unstructured.Unstructured) error {
+func (wm *WatchManager) SyncWatchers(policyName string, generatedResources []*unstructured.Unstructured, useServerSideApply bool) error {
 	wm.lock.Lock()
 	defer wm.lock.Unlock()
 
+	wm.policySSA[policyName] = useServerSideApply
 	logger := wm.log
 	newGVRs := make(map[schema.GroupVersionResource]bool)
 	// start a new watcher for each generated resource
@@ -307,6 +311,7 @@ func (wm *WatchManager) RemoveWatchersForPolicy(policyName string, deleteDownstr
 	} else {
 		logger.V(4).Info("no watchers found for policy")
 	}
+	delete(wm.policySSA, policyName)
 }
 
 // StopWatchers stops all dynamic watchers and clears the internal state.
@@ -319,6 +324,7 @@ func (wm *WatchManager) StopWatchers() {
 	wm.dynamicWatchers = map[schema.GroupVersionResource]*watcher{}
 	wm.policyRefs = map[string][]schema.GroupVersionResource{}
 	wm.refCount = map[schema.GroupVersionResource]int{}
+	wm.policySSA = map[string]bool{}
 }
 
 // startWatcher starts a new watcher for the given resource and GVR.
@@ -420,7 +426,12 @@ func (wm *WatchManager) handleUpdate(obj *unstructured.Unstructured, gvr schema.
 				newResource.SetKind(downstream.GetKind())
 				newResource.SetAPIVersion(downstream.GetAPIVersion())
 				newResource.SetLabels(downstream.GetLabels())
-				_, err := wm.client.UpdateResource(context.TODO(), downstream.GetAPIVersion(), downstream.GetKind(), downstream.GetNamespace(), newResource, false)
+				policyName := downstream.GetLabels()[common.GeneratePolicyLabel]
+				if wm.policySSA[policyName] {
+					_, err = wm.client.ApplyResource(context.TODO(), downstream.GetAPIVersion(), downstream.GetKind(), downstream.GetNamespace(), downstream.GetName(), newResource, false, "generate")
+				} else {
+					_, err = wm.client.UpdateResource(context.TODO(), downstream.GetAPIVersion(), downstream.GetKind(), downstream.GetNamespace(), newResource, false)
+				}
 				if err != nil {
 					wm.log.Error(err, "failed to update downstream resource", "name", downstream.GetName(), "namespace", downstream.GetNamespace())
 				} else {
@@ -452,7 +463,13 @@ func (wm *WatchManager) handleUpdate(obj *unstructured.Unstructured, gvr schema.
 				downstream.SetCreationTimestamp(metav1.Time{})
 				downstream.SetManagedFields(nil)
 				downstream.SetResourceVersion("")
-				_, err := wm.client.UpdateResource(context.TODO(), downstream.GetAPIVersion(), downstream.GetKind(), downstream.GetNamespace(), downstream, false)
+				policyName := downstream.GetLabels()[common.GeneratePolicyLabel]
+				var err error
+				if wm.policySSA[policyName] {
+					_, err = wm.client.ApplyResource(context.TODO(), downstream.GetAPIVersion(), downstream.GetKind(), downstream.GetNamespace(), downstream.GetName(), downstream, false, "generate")
+				} else {
+					_, err = wm.client.UpdateResource(context.TODO(), downstream.GetAPIVersion(), downstream.GetKind(), downstream.GetNamespace(), downstream, false)
+				}
 				if err != nil {
 					wm.log.Error(err, "failed to revert downstream resource", "name", obj.GetName(), "namespace", obj.GetNamespace())
 				} else {
@@ -513,7 +530,13 @@ func (wm *WatchManager) handleDelete(obj *unstructured.Unstructured, gvr schema.
 				downstream.SetCreationTimestamp(metav1.Time{})
 				downstream.SetManagedFields(nil)
 				downstream.SetResourceVersion("")
-				_, err := wm.client.CreateResource(context.TODO(), downstream.GetAPIVersion(), downstream.GetKind(), downstream.GetNamespace(), downstream, false)
+				policyName := downstream.GetLabels()[common.GeneratePolicyLabel]
+				var err error
+				if wm.policySSA[policyName] {
+					_, err = wm.client.ApplyResource(context.TODO(), downstream.GetAPIVersion(), downstream.GetKind(), downstream.GetNamespace(), downstream.GetName(), downstream, false, "generate")
+				} else {
+					_, err = wm.client.CreateResource(context.TODO(), downstream.GetAPIVersion(), downstream.GetKind(), downstream.GetNamespace(), downstream, false)
+				}
 				if err != nil {
 					wm.log.Error(err, "failed to revert downstream resource", "name", obj.GetName(), "namespace", obj.GetNamespace())
 				} else {

@@ -35,18 +35,19 @@ type Context interface {
 
 	GetGeneratedResources() []*unstructured.Unstructured
 	ClearGeneratedResources()
-	SetGenerateContext(polName, triggerName, triggerNamespace, triggerAPIVersion, triggerGroup, triggerKind, triggerUID string, restoreCache bool)
+	SetGenerateContext(polName, triggerName, triggerNamespace, triggerAPIVersion, triggerGroup, triggerKind, triggerUID string, restoreCache, useServerSideApply bool)
 }
 
 type generateContext struct {
-	policyName        string
-	triggerName       string
-	triggerNamespace  string
-	triggerAPIVersion string
-	triggerGroup      string
-	triggerKind       string
-	triggerUID        string
-	restoreCache      bool
+	policyName         string
+	triggerName        string
+	triggerNamespace   string
+	triggerAPIVersion  string
+	triggerGroup       string
+	triggerKind        string
+	triggerUID         string
+	restoreCache       bool
+	useServerSideApply bool
 }
 
 type contextProvider struct {
@@ -195,14 +196,28 @@ func (cp *contextProvider) GenerateResources(namespace string, dataList []map[st
 			// if the resource is not found, create it
 			if err != nil && apierrors.IsNotFound(err) {
 				if !cp.genCtx.restoreCache {
-					generatedRes, err := cp.client.CreateResource(
-						context.TODO(),
-						item.GetAPIVersion(),
-						item.GetKind(),
-						namespace,
-						item,
-						false,
-					)
+					var generatedRes *unstructured.Unstructured
+					if cp.genCtx.useServerSideApply {
+						generatedRes, err = cp.client.ApplyResource(
+							context.TODO(),
+							item.GetAPIVersion(),
+							item.GetKind(),
+							namespace,
+							item.GetName(),
+							item,
+							false,
+							"generate",
+						)
+					} else {
+						generatedRes, err = cp.client.CreateResource(
+							context.TODO(),
+							item.GetAPIVersion(),
+							item.GetKind(),
+							namespace,
+							item,
+							false,
+						)
+					}
 					if err != nil {
 						return err
 					}
@@ -241,7 +256,7 @@ func (cp *contextProvider) addGenerateLabels(obj *unstructured.Unstructured) {
 
 func (cp *contextProvider) SetGenerateContext(
 	polName, triggerName, triggerNamespace, triggerAPIVersion, triggerGroup, triggerKind, triggerUID string,
-	restoreCache bool,
+	restoreCache, useServerSideApply bool,
 ) {
 	cp.genCtx.policyName = polName
 	cp.genCtx.triggerName = triggerName
@@ -251,6 +266,7 @@ func (cp *contextProvider) SetGenerateContext(
 	cp.genCtx.triggerKind = triggerKind
 	cp.genCtx.triggerUID = triggerUID
 	cp.genCtx.restoreCache = restoreCache
+	cp.genCtx.useServerSideApply = useServerSideApply
 }
 
 func (cp *contextProvider) GetGeneratedResources() []*unstructured.Unstructured {

@@ -164,6 +164,7 @@ func TestSyncWatchers(t *testing.T) {
 					restMapper: &mockRESTMapper{fn: func(gk schema.GroupKind, version string) (*meta.RESTMapping, error) {
 						return nil, errors.New("map err")
 					}},
+					policySSA: make(map[string]bool),
 				}
 			},
 			generatedResources: []*unstructured.Unstructured{makeUnstructured("", "g", "v1", "Kind", "n", "ns", "uid1", nil)},
@@ -184,6 +185,7 @@ func TestSyncWatchers(t *testing.T) {
 					},
 					policyRefs: make(map[string][]schema.GroupVersionResource),
 					refCount:   make(map[schema.GroupVersionResource]int),
+					policySSA:  make(map[string]bool),
 				}
 			},
 			generatedResources: []*unstructured.Unstructured{makeUnstructured("", "g", "v1", "Kind", "n", "ns", "uid1", nil)},
@@ -201,6 +203,7 @@ func TestSyncWatchers(t *testing.T) {
 					dynamicWatchers: make(map[schema.GroupVersionResource]*watcher),
 					policyRefs:      make(map[string][]schema.GroupVersionResource),
 					refCount:        make(map[schema.GroupVersionResource]int),
+					policySSA:       make(map[string]bool),
 				}
 				return wm
 			},
@@ -221,7 +224,8 @@ func TestSyncWatchers(t *testing.T) {
 					policyRefs: map[string][]schema.GroupVersionResource{
 						"pol1": {gvr1},
 					},
-					refCount: make(map[schema.GroupVersionResource]int),
+					refCount:  make(map[schema.GroupVersionResource]int),
+					policySSA: make(map[string]bool),
 				}
 			},
 			generatedResources: []*unstructured.Unstructured{makeUnstructured("1", "g", "v1", "Kind", "n", "ns", "uid1", nil)},
@@ -269,6 +273,7 @@ func TestSyncWatchers(t *testing.T) {
 					refCount: map[schema.GroupVersionResource]int{
 						gvr1: 1,
 					},
+					policySSA: make(map[string]bool),
 				}
 			},
 			generatedResources: []*unstructured.Unstructured{makeUnstructured("1", "g", "v1", "Kind", "n", "ns", "uid1", nil)},
@@ -313,6 +318,7 @@ func TestSyncWatchers(t *testing.T) {
 					refCount: map[schema.GroupVersionResource]int{
 						gvr1: 1,
 					},
+					policySSA: make(map[string]bool),
 				}
 			},
 			generatedResources: []*unstructured.Unstructured{makeUnstructured("1", "g", "v1", "Kind", "n", "ns", "uid1", nil)},
@@ -322,7 +328,7 @@ func TestSyncWatchers(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			wm := tc.setupWM()
-			err := wm.SyncWatchers(tc.polName, tc.generatedResources)
+			err := wm.SyncWatchers(tc.polName, tc.generatedResources, false)
 			if tc.wantErr {
 				assert.Error(t, err)
 			} else {
